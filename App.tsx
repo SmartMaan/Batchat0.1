@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { auth, db } from './services/firebase';
 import { onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, User } from 'firebase/auth';
@@ -218,8 +217,19 @@ const DashboardPage: React.FC<{ user: User, userProfile: UserProfile }> = ({ use
                 const chatPromises = chatIds.map(chatId => get(ref(db, `chats/${chatId}`)));
                 
                 Promise.all(chatPromises).then(chatSnapshots => {
+                    // FIX: Type 'any' is not assignable to 'never'.
+                    // The unsafe spread of `snap.val()` could assign `null` to `lastMessage`,
+                    // which violates the `LastMessage | undefined` type. This safe mapping
+                    // ensures type compatibility by converting `null` to `undefined`.
                     const fetchedChats = chatSnapshots
-                        .map(snap => snap.exists() ? ({ id: snap.key!, ...snap.val() } as Chat) : null)
+                        .map(snap => {
+                            if (!snap.exists()) return null;
+                            const chatData = snap.val();
+                            if (chatData.lastMessage === null) {
+                                chatData.lastMessage = undefined;
+                            }
+                            return { id: snap.key!, ...chatData } as Chat
+                        })
                         .filter((c): c is Chat => c !== null);
                     
                     setChats(fetchedChats.sort((a, b) => (b.lastMessage?.timestamp || 0) - (a.lastMessage?.timestamp || 0)));
@@ -267,7 +277,7 @@ const DashboardPage: React.FC<{ user: User, userProfile: UserProfile }> = ({ use
          <div className="h-screen w-screen flex bg-gray-900 text-gray-200 overflow-hidden relative">
             <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} userProfile={userProfile} onSettingsClick={() => setActiveOverlay('settings')}/>
             <div className={`flex-1 flex transition-transform duration-300 ${isSidebarOpen ? 'translate-x-64' : 'translate-x-0'}`}>
-                <div className={`h-full transition-all duration-300 ${activeChat ? 'w-0 -translate-x-full md:w-96 md:translate-x-0' : 'w-full md:w-96'}`}>
+                <div className={`h-full transition-all duration-300 overflow-hidden ${activeChat ? 'w-0 -translate-x-full md:w-96 md:translate-x-0' : 'w-full md:w-96'}`}>
                     <ChatList userProfile={userProfile} chats={chats} setActiveChat={setActiveChat} activeChatId={activeChat?.id} loading={loadingChats} onMenuClick={() => setIsSidebarOpen(true)} />
                 </div>
                 <main className="flex-1 flex flex-col h-full bg-gray-800 bg-[url('https://i.pinimg.com/736x/8c/98/99/8c98994518b575bfd8c949e91d20548b.jpg')] bg-center bg-cover">
@@ -904,7 +914,11 @@ const SearchModal: React.FC<{ userProfile: UserProfile; onClose: () => void; set
             let chatToOpen: Chat;
 
             if (chatSnap.exists()) {
-                chatToOpen = { id: dmChatId, ...chatSnap.val() };
+                const chatData = chatSnap.val();
+                if (chatData.lastMessage === null) {
+                    delete chatData.lastMessage;
+                }
+                chatToOpen = { id: dmChatId, ...chatData };
             } else {
                 chatToOpen = {
                     id: dmChatId,
@@ -968,6 +982,113 @@ const SearchModal: React.FC<{ userProfile: UserProfile; onClose: () => void; set
 };
 
 // --- NEW SETTINGS & PROFILE COMPONENTS ---
+
+const WheelPicker: React.FC<{
+    items: (string | number)[];
+    value: string | number;
+    onChange: (newValue: string | number) => void;
+    itemHeight?: number;
+    containerHeight?: number;
+}> = ({ items, value, onChange, itemHeight = 48, containerHeight = 240 }) => {
+    const scrollerRef = useRef<HTMLDivElement>(null);
+    const timeoutRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        const initialIndex = items.findIndex(item => item === value);
+        if (scrollerRef.current && initialIndex !== -1) {
+            scrollerRef.current.scrollTop = initialIndex * itemHeight;
+        }
+    }, []); // Run only once on mount
+
+    const handleScroll = useCallback(() => {
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+        }
+        timeoutRef.current = window.setTimeout(() => {
+            if (!scrollerRef.current) return;
+            const { scrollTop } = scrollerRef.current;
+            const selectedIndex = Math.round(scrollTop / itemHeight);
+            const selectedItem = items[selectedIndex];
+            if (selectedItem !== undefined && selectedItem !== value) {
+                onChange(selectedItem);
+            }
+        }, 150); // Debounce scroll event
+    }, [itemHeight, items, value, onChange]);
+
+    const paddingTop = (containerHeight - itemHeight) / 2;
+
+    return (
+        <div 
+            ref={scrollerRef} 
+            onScroll={handleScroll}
+            className="w-full h-full overflow-y-scroll scroll-smooth snap-y snap-mandatory hide-scrollbar"
+            style={{ height: `${containerHeight}px` }}
+        >
+            <div style={{ paddingTop: `${paddingTop}px`, paddingBottom: `${paddingTop}px` }}>
+                {items.map((item, index) => (
+                    <div
+                        key={index}
+                        className="flex items-center justify-center snap-center transition-all duration-200"
+                        style={{ height: `${itemHeight}px` }}
+                    >
+                        <span className={`text-xl ${item === value ? 'font-bold text-white scale-110' : 'text-gray-500'}`}>
+                            {item}
+                        </span>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const BirthdayPicker: React.FC<{
+    initialValue: string;
+    onSave: (date: string) => void;
+    onClose: () => void;
+}> = ({ initialValue, onSave, onClose }) => {
+    const initialParts = useMemo(() => initialValue ? initialValue.split(' ') : [], [initialValue]);
+    
+    const [day, setDay] = useState<string|number>(() => initialParts.length === 3 ? parseInt(initialParts[0], 10) : '-');
+    const [month, setMonth] = useState<string|number>(() => initialParts.length === 3 ? initialParts[1] : 'October');
+    const [year, setYear] = useState<string|number>(() => initialParts.length === 3 ? parseInt(initialParts[2], 10) : '-');
+
+    const months = useMemo(() => ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'], []);
+    const years = useMemo(() => ['-', ...Array.from({ length: 100 }, (_, i) => new Date().getFullYear() - i)], []);
+    const days = useMemo(() => {
+        const monthIndex = months.indexOf(month as string);
+        if (monthIndex === -1 || year === '-') return ['-', ...Array.from({ length: 31 }, (_, i) => i + 1)];
+        const daysInMonth = new Date(year as number, monthIndex + 1, 0).getDate();
+        return ['-', ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+    }, [month, year, months]);
+
+    const handleSave = () => {
+       if (day === '-' && month === 'October' && year === '-') {
+            onSave('');
+        } else {
+            onSave(`${day} ${month} ${year}`);
+        }
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/70 flex items-end justify-center z-[60]" onClick={onClose}>
+            <div className="bg-gray-800 rounded-t-2xl shadow-xl w-full max-w-md p-4" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold text-white mb-4 text-center">Birthday</h3>
+                <div className="relative h-[240px]">
+                    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-12 bg-gray-700/50 rounded-lg border-y border-gray-600" />
+                    <div className="flex justify-center items-center h-full">
+                        <div className="w-1/4"><WheelPicker items={days} value={day} onChange={setDay} /></div>
+                        <div className="w-1/2"><WheelPicker items={months} value={month} onChange={setMonth} /></div>
+                        <div className="w-1/4"><WheelPicker items={years} value={year} onChange={setYear} /></div>
+                    </div>
+                </div>
+                <button onClick={handleSave} className="w-full mt-4 py-3 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-bold transition-colors">
+                    Save
+                </button>
+            </div>
+        </div>
+    );
+};
 
 const SettingsPage: React.FC<{userProfile: UserProfile, onClose: () => void}> = ({ userProfile, onClose }) => {
     const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -1056,17 +1177,26 @@ const SettingsPage: React.FC<{userProfile: UserProfile, onClose: () => void}> = 
 };
 
 const EditProfilePage: React.FC<{userProfile: UserProfile, onClose: () => void}> = ({ userProfile, onClose }) => {
-    const [name, setName] = useState(userProfile.name);
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
     const [bio, setBio] = useState(userProfile.bio || '');
     const [birthday, setBirthday] = useState(userProfile.birthday || '');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [isBirthdayPickerOpen, setIsBirthdayPickerOpen] = useState(false);
+
+    useEffect(() => {
+        const nameParts = userProfile.name.split(' ');
+        setFirstName(nameParts[0] || '');
+        setLastName(nameParts.slice(1).join(' '));
+    }, [userProfile.name]);
 
     const handleSave = async () => {
         setLoading(true);
         setError('');
         try {
-            const updates: Partial<UserProfile> = { name, bio, birthday };
+            const fullName = [firstName, lastName].filter(Boolean).join(' ');
+            const updates: Partial<UserProfile> = { name: fullName, bio, birthday };
             await update(ref(db, `users/${userProfile.uid}`), updates);
             onClose();
         } catch (err: any) {
@@ -1077,7 +1207,7 @@ const EditProfilePage: React.FC<{userProfile: UserProfile, onClose: () => void}>
     };
 
     return (
-        <div className="fixed inset-0 bg-gray-900 z-50 animate-slide-in-right">
+        <div className="fixed inset-0 bg-gray-900 z-[55] animate-slide-in-right">
              <header className="flex items-center justify-between p-3 bg-gray-800">
                 <button onClick={onClose} className="p-2 text-gray-300 hover:text-white"><ArrowLeftIcon className="w-6 h-6" /></button>
                 <h2 className="text-xl font-bold text-white">Profile Info</h2>
@@ -1087,8 +1217,14 @@ const EditProfilePage: React.FC<{userProfile: UserProfile, onClose: () => void}>
                 {error && <p className="text-red-400 p-2 bg-red-900/50 rounded">{error}</p>}
                 <div>
                     <div className="relative border-b-2 border-gray-600 focus-within:border-blue-500">
-                        <input id="name" type="text" value={name} onChange={e => setName(e.target.value)} className="block w-full bg-transparent text-white pt-4 pb-1 focus:outline-none" placeholder=" "/>
+                        <input id="name" type="text" value={firstName} onChange={e => setFirstName(e.target.value)} className="block w-full bg-transparent text-white pt-4 pb-1 focus:outline-none" placeholder=" "/>
                         <label htmlFor="name" className="absolute top-4 left-0 text-gray-400 duration-300 transform -translate-y-6 scale-75 origin-[0] pointer-events-none">Your name</label>
+                    </div>
+                </div>
+                <div>
+                    <div className="relative border-b-2 border-gray-600 focus-within:border-blue-500">
+                        <input id="lastname" type="text" value={lastName} onChange={e => setLastName(e.target.value)} className="block w-full bg-transparent text-white pt-4 pb-1 focus:outline-none" placeholder=" "/>
+                        <label htmlFor="lastname" className="absolute top-4 left-0 text-gray-400 duration-300 transform -translate-y-6 scale-75 origin-[0] pointer-events-none">Last name</label>
                     </div>
                 </div>
                  <div>
@@ -1102,13 +1238,18 @@ const EditProfilePage: React.FC<{userProfile: UserProfile, onClose: () => void}>
                     </div>
                 </div>
                 <div>
-                    <div className="relative border-b-2 border-gray-600 focus-within:border-blue-500">
-                        <input id="birthday" type="text" value={birthday} onChange={e => setBirthday(e.target.value)} className="block w-full bg-transparent text-white pt-4 pb-1 focus:outline-none" placeholder="Add"/>
-                        <label htmlFor="birthday" className="absolute top-4 left-0 text-gray-400 duration-300 transform -translate-y-6 scale-75 origin-[0] pointer-events-none">Your birthday</label>
+                    <div onClick={() => setIsBirthdayPickerOpen(true)} className="relative border-b-2 border-gray-600 focus-within:border-blue-500 cursor-pointer">
+                        <div id="birthday" className={`block w-full bg-transparent pt-4 pb-1 ${birthday ? 'text-white' : 'text-gray-500'}`}>{birthday || 'Add'}</div>
+                        <label htmlFor="birthday" className="absolute top-4 left-0 text-gray-400 duration-300 transform -translate-y-6 scale-75 origin-[0] pointer-events-none">Birthday</label>
                     </div>
                     <p className="text-sm text-gray-500 mt-1">Choose who can see your birthday in Settings.</p>
                 </div>
             </div>
+            {isBirthdayPickerOpen && <BirthdayPicker 
+                initialValue={birthday} 
+                onSave={(date) => setBirthday(date)} 
+                onClose={() => setIsBirthdayPickerOpen(false)} 
+            />}
         </div>
     );
 };

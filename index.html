@@ -39,6 +39,14 @@
       .animate-slide-in-right {
         animation: slideInRight 0.3s ease-out forwards;
       }
+       /* Hide scrollbar for wheel picker */
+      .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .hide-scrollbar {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+      }
     </style>
   <script type="importmap">
 {
