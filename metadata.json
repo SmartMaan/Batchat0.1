@@ -1,0 +1,5 @@
+{
+  "name": "React Firebase Chat App",
+  "description": "A complete, real-time chat application with direct messages, groups, and channels, built with React, TypeScript, Tailwind CSS, and Firebase. Users can sign up, search for others, create and join conversations.",
+  "requestFramePermissions": []
+}
